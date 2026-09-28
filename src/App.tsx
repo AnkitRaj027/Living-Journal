@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import type { JournalAct, JournalEntry, LampIntensity, HandwritingStyle, MoodType } from './types/journal';
+import type { JournalAct, JournalEntry, LampIntensity, HandwritingStyle, MoodType, SyncStatus } from './types/journal';
 import { journalDB, calculateJournalStreak } from './storage/db';
 import { getRandomPrompt } from './data/prompts';
 import { soundEngine } from './audio/soundEngine';
@@ -8,6 +8,11 @@ import { JournalBook } from './journal/JournalBook';
 import { CalendarPage } from './journal/CalendarPage';
 import { SearchIndex } from './journal/SearchIndex';
 import { StatsModal } from './journal/StatsModal';
+import { AuthProvider, useAuth } from './auth/AuthContext';
+import { AuthModal } from './auth/AuthModal';
+import { MigrationModal } from './auth/MigrationModal';
+import { AccountMenu } from './journal/AccountMenu';
+import { syncEngine } from './sync/syncEngine';
 import { 
   Volume2, 
   VolumeX, 
@@ -20,7 +25,9 @@ import {
   Lock
 } from 'lucide-react';
 
-export const App: React.FC = () => {
+const JournalInnerApp: React.FC = () => {
+  const { user, profile, authState } = useAuth();
+
   // Current local date in YYYY-MM-DD
   const getTodayDateStr = () => {
     const d = new Date();
@@ -31,7 +38,7 @@ export const App: React.FC = () => {
   };
   const [currentDate, setCurrentDate] = useState<string>(getTodayDateStr);
 
-  // Custom Embossed Journal Title (Option 4)
+  // Custom Embossed Journal Title
   const [journalTitle, setJournalTitle] = useState<string>(() => {
     return localStorage.getItem('journal_custom_title') || 'MY JOURNAL';
   });
@@ -76,17 +83,29 @@ export const App: React.FC = () => {
   const [nostalgicMemory, setNostalgicMemory] = useState<JournalEntry | null>(null);
   const [isWriting, setIsWriting] = useState<boolean>(false);
   const [isSaved, setIsSaved] = useState<boolean>(false);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('saved');
 
   // Modals
   const [showCalendar, setShowCalendar] = useState<boolean>(false);
   const [showSearch, setShowSearch] = useState<boolean>(false);
   const [showStats, setShowStats] = useState<boolean>(false);
+  const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
+  const [showAccountMenu, setShowAccountMenu] = useState<boolean>(false);
+  const [showMigrationModal, setShowMigrationModal] = useState<boolean>(false);
   const [showOnboarding, setShowOnboarding] = useState<boolean>(() => {
     return !localStorage.getItem('journal_onboarding_dismissed');
   });
 
   const saveTimeoutRef = useRef<number | null>(null);
   const isWritingTimeoutRef = useRef<number | null>(null);
+
+  // Subscribe to sync status changes from sync engine
+  useEffect(() => {
+    const unsub = syncEngine.subscribeStatus((status) => {
+      setSyncStatus(status);
+    });
+    return unsub;
+  }, []);
 
   // Load all entries and current entry from IndexedDB
   const refreshEntries = useCallback(async () => {
@@ -120,7 +139,33 @@ export const App: React.FC = () => {
     refreshEntries();
   }, [refreshEntries]);
 
-  // Calculate Streak & Plant Stage
+  // When user is authenticated, check for migration and sync with Supabase cloud
+  useEffect(() => {
+    if (user && authState === 'authenticated') {
+      journalDB.hasUnmigratedEntries(user.id).then((hasUnmigrated) => {
+        if (hasUnmigrated) {
+          setShowMigrationModal(true);
+        } else {
+          syncEngine.syncAllFromCloud(user.id).then((cloudEntries) => {
+            setAllEntries(cloudEntries);
+            refreshEntries();
+          });
+        }
+      });
+    }
+  }, [user, authState, refreshEntries]);
+
+  // If user signs out, close open journal and refresh local state
+  useEffect(() => {
+    if (authState === 'unauthenticated' && !user) {
+      if (act === 'open') {
+        setAct('arrival');
+      }
+      refreshEntries();
+    }
+  }, [authState, user, act, refreshEntries]);
+
+  // Calculate Streak & Plant Stage from actual journal entries (consistent across all devices)
   const stats = calculateJournalStreak(allEntries);
 
   // Handle Sound Toggle
@@ -161,6 +206,14 @@ export const App: React.FC = () => {
   // Act Transitions
   const handleOpenJournal = () => {
     if (act !== 'arrival') return;
+
+    // If not authenticated, prompt with minimal journal-themed authentication modal
+    if (authState === 'unauthenticated') {
+      soundEngine.playClaspClick();
+      setShowAuthModal(true);
+      return;
+    }
+
     setAct('opening');
     soundEngine.playClaspClick();
     setTimeout(() => {
@@ -190,7 +243,7 @@ export const App: React.FC = () => {
 
   const handleNextDay = () => {
     const today = getTodayDateStr();
-    if (currentDate >= today) return; // Strictly locked: cannot go forward past today
+    if (currentDate >= today) return;
     const d = new Date(currentDate + 'T12:00:00');
     d.setDate(d.getDate() + 1);
     const year = d.getFullYear();
@@ -210,24 +263,35 @@ export const App: React.FC = () => {
     setCurrentDate(targetDate);
   };
 
-  // Continuous Auto-Save to IndexedDB
+  // Continuous Debounced Auto-Save to Local Cache and Supabase Cloud
   const triggerAutoSave = (updated: JournalEntry) => {
     setCurrentEntry(updated);
     
-    // Trigger writing visual feedback for fountain pen on desk
+    // Fountain pen writing feedback
     setIsWriting(true);
     if (isWritingTimeoutRef.current) clearTimeout(isWritingTimeoutRef.current);
     isWritingTimeoutRef.current = setTimeout(() => setIsWriting(false), 500);
 
-    // Debounced persist
+    setSyncStatus('saving');
+
+    // Debounced persist (~750ms)
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(async () => {
+      // 1. Instant local persistence
       await journalDB.saveEntry(updated);
       setIsSaved(true);
       setTimeout(() => setIsSaved(false), 2400);
+
+      // 2. Push to Supabase if authenticated
+      if (user?.id) {
+        await syncEngine.pushEntry(updated, user.id);
+      } else {
+        setSyncStatus('local_only');
+      }
+
       const entries = await journalDB.getAllEntries();
       setAllEntries(entries);
-    }, 600);
+    }, 750);
   };
 
   const handleUpdateText = (text: string) => {
@@ -258,6 +322,8 @@ export const App: React.FC = () => {
 
   // Set of dates with recorded memories for the calendar
   const entryDatesSet = new Set(allEntries.map(e => e.date));
+
+  const userInitial = (profile?.displayName || user?.email || 'J')[0].toUpperCase();
 
   return (
     <div className="journal-app-stage">
@@ -304,6 +370,89 @@ export const App: React.FC = () => {
         </div>
 
         <div className="ambient-controls">
+          {/* Subtle Account Button / Google Sign In */}
+          {user ? (
+            <button
+              type="button"
+              className="antique-btn user-account-btn"
+              onClick={() => {
+                soundEngine.playPaperTurn('right');
+                setShowAccountMenu(true);
+              }}
+              title={`Author: ${profile?.displayName || user.email} — Click for Cloud Sync & Settings`}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '4px 10px',
+                border: '1px solid rgba(181, 139, 60, 0.35)'
+              }}
+            >
+              {profile?.avatarUrl ? (
+                <img 
+                  src={profile.avatarUrl} 
+                  alt="" 
+                  style={{ width: '18px', height: '18px', borderRadius: '50%', objectFit: 'cover' }}
+                />
+              ) : (
+                <span style={{
+                  width: '18px',
+                  height: '18px',
+                  borderRadius: '50%',
+                  background: 'var(--c-brass-antique)',
+                  color: '#170D08',
+                  fontSize: '10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontWeight: 700
+                }}>
+                  {userInitial}
+                </span>
+              )}
+              <span style={{
+                maxWidth: '90px',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                fontSize: '12px'
+              }}>
+                {profile?.displayName?.split(' ')[0] || user.email?.split('@')[0]}
+              </span>
+              {/* Subtle Sync Indicator Dot */}
+              <span 
+                className={`sync-status-dot dot-${syncStatus}`}
+                style={{
+                  width: '7px',
+                  height: '7px',
+                  borderRadius: '50%',
+                  backgroundColor: syncStatus === 'synced' 
+                    ? '#4CAF50' 
+                    : syncStatus === 'syncing' || syncStatus === 'saving' 
+                    ? '#FFC107' 
+                    : syncStatus === 'offline' 
+                    ? '#9E9E9E' 
+                    : '#B58B3C',
+                  boxShadow: syncStatus === 'synced' ? '0 0 6px rgba(76, 175, 80, 0.8)' : undefined
+                }}
+              />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="antique-btn"
+              onClick={() => {
+                soundEngine.playClaspClick();
+                setShowAuthModal(true);
+              }}
+              title="Sign in with Google to access your journal from any device"
+              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              <Lock size={13} />
+              <span>Sign In</span>
+            </button>
+          )}
+
           {/* Calendar button */}
           <button 
             type="button" 
@@ -372,15 +521,35 @@ export const App: React.FC = () => {
       {/* Act I: Arrival Experience UI Overlay */}
       {act === 'arrival' && (
         <div className="arrival-overlay">
-          <p className="arrival-prompt">The desk is quiet. Your thoughts are waiting.</p>
-          <button 
-            type="button" 
-            className="clasp-unlock-btn" 
-            onClick={handleOpenJournal}
-          >
-            <Lock size={15} />
-            <span>Open Journal</span>
-          </button>
+          {authState === 'initializing' ? (
+            <p className="arrival-prompt" style={{ fontStyle: 'italic', letterSpacing: '0.12em' }}>
+              Restoring your chronicle...
+            </p>
+          ) : authState === 'unauthenticated' ? (
+            <>
+              <p className="arrival-prompt">The desk is quiet. Your thoughts are waiting.</p>
+              <button 
+                type="button" 
+                className="clasp-unlock-btn" 
+                onClick={() => setShowAuthModal(true)}
+              >
+                <Lock size={15} />
+                <span>Continue with Google</span>
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="arrival-prompt">The desk is quiet. Your thoughts are waiting.</p>
+              <button 
+                type="button" 
+                className="clasp-unlock-btn" 
+                onClick={handleOpenJournal}
+              >
+                <Lock size={15} />
+                <span>Open Journal</span>
+              </button>
+            </>
+          )}
         </div>
       )}
 
@@ -393,6 +562,7 @@ export const App: React.FC = () => {
           handwritingStyle={handwritingStyle}
           streak={stats.currentStreak}
           isSaved={isSaved}
+          syncStatus={syncStatus}
           onPrevDay={handlePrevDay}
           onNextDay={handleNextDay}
           onJumpToDate={handleJumpToDate}
@@ -445,6 +615,32 @@ export const App: React.FC = () => {
         />
       )}
 
+      {/* Journal-Themed Authentication Modal */}
+      <AuthModal
+        isOpen={showAuthModal}
+        journalTitle={journalTitle}
+        onClose={() => setShowAuthModal(false)}
+      />
+
+      {/* Local Storage Migration Modal */}
+      {showMigrationModal && user && (
+        <MigrationModal
+          userId={user.id}
+          onComplete={() => {
+            setShowMigrationModal(false);
+            refreshEntries();
+          }}
+        />
+      )}
+
+      {/* Account & Synchronization Control */}
+      <AccountMenu
+        isOpen={showAccountMenu}
+        syncStatus={syncStatus}
+        onClose={() => setShowAccountMenu(false)}
+        onRefreshEntries={refreshEntries}
+      />
+
       {/* First-Time Cinematic Onboarding Modal */}
       {showOnboarding && (
         <div className="antique-modal-backdrop" onClick={dismissOnboarding}>
@@ -491,6 +687,14 @@ export const App: React.FC = () => {
         </div>
       )}
     </div>
+  );
+};
+
+export const App: React.FC = () => {
+  return (
+    <AuthProvider>
+      <JournalInnerApp />
+    </AuthProvider>
   );
 };
 

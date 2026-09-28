@@ -1,4 +1,4 @@
-import type { HandwritingStyle } from '../types/journal';
+import type { HandwritingStyle, SyncStatus } from '../types/journal';
 import { soundEngine } from '../audio/soundEngine';
 
 interface RightPageProps {
@@ -8,6 +8,7 @@ interface RightPageProps {
   handwritingStyle: HandwritingStyle;
   streak: number;
   isSaved: boolean;
+  syncStatus?: SyncStatus;
   onChangeText: (text: string) => void;
   onOpenStats: () => void;
 }
@@ -18,10 +19,31 @@ export const RightPage: React.FC<RightPageProps> = ({
   handwritingStyle,
   streak,
   isSaved,
+  syncStatus = 'saved',
   onChangeText,
   onOpenStats,
 }) => {
   const fontClass = `font-style-${handwritingStyle}`;
+
+  const getSyncText = () => {
+    switch (syncStatus) {
+      case 'saving':
+        return 'Saving...';
+      case 'syncing':
+        return 'Syncing...';
+      case 'synced':
+        return 'Synced';
+      case 'local_only':
+        return 'Saved locally';
+      case 'sync_error':
+        return 'Sync failed';
+      case 'offline':
+        return 'Offline';
+      case 'saved':
+      default:
+        return 'Saved';
+    }
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     // Sound engine pen scratch on typing characters
@@ -73,9 +95,9 @@ export const RightPage: React.FC<RightPageProps> = ({
       {/* Subtle Handwritten Auto-Save Indicator */}
       <div 
         className="saved-indicator"
-        style={{ opacity: isSaved ? 0.75 : 0 }}
+        style={{ opacity: isSaved || syncStatus === 'saving' || syncStatus === 'syncing' ? 0.75 : 0 }}
       >
-        Saved to memory
+        {getSyncText()}
       </div>
     </div>
   );

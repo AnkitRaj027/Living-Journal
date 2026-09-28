@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import type { JournalEntry, MoodType, HandwritingStyle } from '../types/journal';
+import type { JournalEntry, MoodType, HandwritingStyle, SyncStatus } from '../types/journal';
 import { LeftPage } from './LeftPage';
 import { RightPage } from './RightPage';
 import { soundEngine } from '../audio/soundEngine';
@@ -12,6 +12,7 @@ interface JournalBookProps {
   handwritingStyle: HandwritingStyle;
   streak: number;
   isSaved: boolean;
+  syncStatus?: SyncStatus;
   onPrevDay: () => void;
   onNextDay: () => void;
   onJumpToDate: (date: string) => void;
@@ -31,6 +32,7 @@ export const JournalBook: React.FC<JournalBookProps> = ({
   handwritingStyle,
   streak,
   isSaved,
+  syncStatus = 'saved',
   onPrevDay,
   onNextDay,
   onJumpToDate,
@@ -205,6 +207,7 @@ export const JournalBook: React.FC<JournalBookProps> = ({
           handwritingStyle={handwritingStyle}
           streak={streak}
           isSaved={isSaved}
+          syncStatus={syncStatus}
           onChangeText={onUpdateText}
           onOpenStats={onOpenStats}
         />

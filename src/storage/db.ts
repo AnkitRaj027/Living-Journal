@@ -147,7 +147,10 @@ class JournalDatabase {
     }
   }
 
-  public async saveEntry(entry: JournalEntry): Promise<void> {
+  public async saveEntry(
+    entry: JournalEntry,
+    options?: { preserveTimestamp?: boolean }
+  ): Promise<void> {
     // Extract auto-detected hashtags
     const extractedTags = Array.from(
       new Set(
@@ -157,7 +160,7 @@ class JournalDatabase {
     const updatedEntry: JournalEntry = {
       ...entry,
       tags: extractedTags,
-      updatedAt: Date.now()
+      updatedAt: options?.preserveTimestamp && entry.updatedAt ? entry.updatedAt : Date.now()
     };
 
     // Save to localStorage as immediate mirror
@@ -176,6 +179,100 @@ class JournalDatabase {
       console.warn('IndexedDB write failed, persisted to localStorage:', err);
     }
   }
+
+  /**
+   * Replaces or bulk merges local entries (used by cloud sync)
+   */
+  public async replaceEntries(entries: JournalEntry[]): Promise<void> {
+    try {
+      const db = await this.initDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        store.clear();
+        for (const entry of entries) {
+          store.put(entry);
+        }
+        tx.oncomplete = () => {
+          // Sync localStorage index
+          try {
+            const allDates = entries.map(e => e.date);
+            localStorage.setItem('journal_index', JSON.stringify(allDates));
+            for (const e of entries) {
+              localStorage.setItem(`journal_entry_${e.date}`, JSON.stringify(e));
+            }
+          } catch {
+            // Ignore quota errors
+          }
+          resolve();
+        };
+        tx.onerror = () => reject(tx.error);
+      });
+    } catch (err) {
+      console.warn('replaceEntries failed, falling back to localStorage:', err);
+      try {
+        const allDates = entries.map(e => e.date);
+        localStorage.setItem('journal_index', JSON.stringify(allDates));
+        for (const e of entries) {
+          localStorage.setItem(`journal_entry_${e.date}`, JSON.stringify(e));
+        }
+      } catch (e) {
+        console.warn('LocalStorage fallback failed:', e);
+      }
+    }
+  }
+
+  /**
+   * Clears local cache for clean sign-out / user switch
+   */
+  public async clearAllLocalEntries(): Promise<void> {
+    try {
+      const db = await this.initDB();
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.clear();
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+    } catch (err) {
+      console.warn('clearAllLocalEntries error:', err);
+    }
+
+    // Clear localStorage journal items
+    try {
+      const allDates: string[] = JSON.parse(localStorage.getItem('journal_index') || '[]');
+      for (const d of allDates) {
+        localStorage.removeItem(`journal_entry_${d}`);
+      }
+      localStorage.removeItem('journal_index');
+    } catch {
+      // Ignore
+    }
+  }
+
+  /**
+   * Checks if this device has existing local entries that have not been migrated yet to this user
+   */
+  public async hasUnmigratedEntries(userId: string): Promise<boolean> {
+    if (!userId) return false;
+    const isMigrated = localStorage.getItem(`journal_migrated_for_${userId}`);
+    if (isMigrated === 'true') return false;
+
+    const entries = await this.getAllEntries();
+    // Local entries exist if there is at least one entry with non-empty content
+    return entries.some(e => e.entryText && e.entryText.trim().length > 0);
+  }
+
+  /**
+   * Marks migration as completed for this user
+   */
+  public markMigrated(userId: string): void {
+    if (userId) {
+      localStorage.setItem(`journal_migrated_for_${userId}`, 'true');
+    }
+  }
+
 
   public async getAllEntries(): Promise<JournalEntry[]> {
     try {
