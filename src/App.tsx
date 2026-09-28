@@ -207,13 +207,6 @@ const JournalInnerApp: React.FC = () => {
   const handleOpenJournal = () => {
     if (act !== 'arrival') return;
 
-    // If not authenticated, prompt with minimal journal-themed authentication modal
-    if (authState === 'unauthenticated') {
-      soundEngine.playClaspClick();
-      setShowAuthModal(true);
-      return;
-    }
-
     setAct('opening');
     soundEngine.playClaspClick();
     setTimeout(() => {
@@ -525,29 +518,46 @@ const JournalInnerApp: React.FC = () => {
             <p className="arrival-prompt" style={{ fontStyle: 'italic', letterSpacing: '0.12em' }}>
               Restoring your chronicle...
             </p>
-          ) : authState === 'unauthenticated' ? (
-            <>
-              <p className="arrival-prompt">The desk is quiet. Your thoughts are waiting.</p>
-              <button 
-                type="button" 
-                className="clasp-unlock-btn" 
-                onClick={() => setShowAuthModal(true)}
-              >
-                <Lock size={15} />
-                <span>Continue with Google</span>
-              </button>
-            </>
           ) : (
             <>
               <p className="arrival-prompt">The desk is quiet. Your thoughts are waiting.</p>
-              <button 
-                type="button" 
-                className="clasp-unlock-btn" 
-                onClick={handleOpenJournal}
-              >
-                <Lock size={15} />
-                <span>Open Journal</span>
-              </button>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+                <button 
+                  type="button" 
+                  className="clasp-unlock-btn" 
+                  onClick={handleOpenJournal}
+                >
+                  <Sparkles size={16} />
+                  <span>Open Journal</span>
+                </button>
+                {authState === 'unauthenticated' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      soundEngine.playClaspClick();
+                      setShowAuthModal(true);
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--c-brass-antique)',
+                      fontFamily: 'var(--font-classical)',
+                      fontSize: '11px',
+                      letterSpacing: '0.14em',
+                      cursor: 'pointer',
+                      opacity: 0.85,
+                      padding: '4px 8px',
+                      textTransform: 'uppercase',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}
+                  >
+                    <Lock size={12} />
+                    <span>Sign in with Google to sync</span>
+                  </button>
+                )}
+              </div>
             </>
           )}
         </div>

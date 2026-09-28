@@ -715,11 +715,20 @@ export const DeskCanvas: React.FC<DeskCanvasProps> = ({
     scene.add(dust);
     dustParticlesRef.current = dust;
 
-    // 16. Interactive Raycasting for Clicks
+    // 16. Interactive Raycasting for Taps & Clicks (Touch + Mouse Friendly)
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
+    let pointerDownPos = { x: 0, y: 0 };
 
-    const handlePointerDown = (event: MouseEvent) => {
+    const handlePointerDown = (event: PointerEvent) => {
+      pointerDownPos = { x: event.clientX, y: event.clientY };
+    };
+
+    const handlePointerUp = (event: PointerEvent) => {
+      // If user dragged to rotate the desk scene, ignore tap
+      const dist = Math.hypot(event.clientX - pointerDownPos.x, event.clientY - pointerDownPos.y);
+      if (dist > 10) return;
+
       const rect = renderer.domElement.getBoundingClientRect();
       mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -754,7 +763,30 @@ export const DeskCanvas: React.FC<DeskCanvasProps> = ({
       }
     };
 
-    window.addEventListener('click', handlePointerDown);
+    const handlePointerMove = (event: PointerEvent) => {
+      if (actRef.current !== 'arrival') {
+        renderer.domElement.style.cursor = 'default';
+        return;
+      }
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+
+      const intersects = raycaster.intersectObjects([
+        ...journalGroup.children,
+        ...lampGroup.children,
+        ...penGroup.children
+      ], true);
+
+      renderer.domElement.style.cursor = intersects.length > 0 ? 'pointer' : 'grab';
+    };
+
+    const domEl = renderer.domElement;
+    domEl.style.cursor = 'grab';
+    window.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointermove', handlePointerMove);
 
     // 17. Resize Handler
     const handleResize = () => {
@@ -827,7 +859,9 @@ export const DeskCanvas: React.FC<DeskCanvasProps> = ({
 
     return () => {
       cancelAnimationFrame(animId);
-      window.removeEventListener('click', handlePointerDown);
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('resize', handleResize);
       controls.dispose();
       renderer.dispose();
