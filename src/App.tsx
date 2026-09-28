@@ -155,15 +155,18 @@ const JournalInnerApp: React.FC = () => {
     }
   }, [user, authState, refreshEntries]);
 
-  // If user signs out, close open journal and refresh local state
+  const previousUserRef = useRef<string | null>(null);
+
+  // Only close open journal when user actively signs out from a session
   useEffect(() => {
-    if (authState === 'unauthenticated' && !user) {
+    if (previousUserRef.current && !user) {
       if (act === 'open') {
         setAct('arrival');
       }
       refreshEntries();
     }
-  }, [authState, user, act, refreshEntries]);
+    previousUserRef.current = user ? user.id : null;
+  }, [user, act, refreshEntries]);
 
   // Calculate Streak & Plant Stage from actual journal entries (consistent across all devices)
   const stats = calculateJournalStreak(allEntries);
@@ -514,52 +517,44 @@ const JournalInnerApp: React.FC = () => {
       {/* Act I: Arrival Experience UI Overlay */}
       {act === 'arrival' && (
         <div className="arrival-overlay">
-          {authState === 'initializing' ? (
-            <p className="arrival-prompt" style={{ fontStyle: 'italic', letterSpacing: '0.12em' }}>
-              Restoring your chronicle...
-            </p>
-          ) : (
-            <>
-              <p className="arrival-prompt">The desk is quiet. Your thoughts are waiting.</p>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
-                <button 
-                  type="button" 
-                  className="clasp-unlock-btn" 
-                  onClick={handleOpenJournal}
-                >
-                  <Sparkles size={16} />
-                  <span>Open Journal</span>
-                </button>
-                {authState === 'unauthenticated' && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      soundEngine.playClaspClick();
-                      setShowAuthModal(true);
-                    }}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: 'var(--c-brass-antique)',
-                      fontFamily: 'var(--font-classical)',
-                      fontSize: '11px',
-                      letterSpacing: '0.14em',
-                      cursor: 'pointer',
-                      opacity: 0.85,
-                      padding: '4px 8px',
-                      textTransform: 'uppercase',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px'
-                    }}
-                  >
-                    <Lock size={12} />
-                    <span>Sign in with Google to sync</span>
-                  </button>
-                )}
-              </div>
-            </>
-          )}
+          <p className="arrival-prompt">The desk is quiet. Your thoughts are waiting.</p>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+            <button 
+              type="button" 
+              className="clasp-unlock-btn" 
+              onClick={handleOpenJournal}
+            >
+              <Sparkles size={16} />
+              <span>Open Journal</span>
+            </button>
+            {(!user || authState === 'unauthenticated') && (
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playClaspClick();
+                  setShowAuthModal(true);
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--c-brass-antique)',
+                  fontFamily: 'var(--font-classical)',
+                  fontSize: '11px',
+                  letterSpacing: '0.14em',
+                  cursor: 'pointer',
+                  opacity: 0.85,
+                  padding: '4px 8px',
+                  textTransform: 'uppercase',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <Lock size={12} />
+                <span>Sign in with Google to sync</span>
+              </button>
+            )}
+          </div>
         </div>
       )}
 
